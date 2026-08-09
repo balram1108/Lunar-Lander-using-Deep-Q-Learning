@@ -10,13 +10,9 @@ for step_number in range(500):
 
     observation, reward, terminated, truncated, info = env.step(action)
 
-    print("Step:", step_number)
-    print("Action:", action)
-    print("Observation:", observation)
-    print("Reward:", reward)
-    print("Terminated:", terminated)
-    print("Truncated:", truncated)
-    print("----------------------")
+    print(f"Step:{step_number}, Action:{action}, Observation:{observation} , Reward:{reward}, Terminated:{terminated},Truncated:{truncated},Info: {info} ")
+
+
 
     if terminated or truncated:
         print("Episode finished.")
