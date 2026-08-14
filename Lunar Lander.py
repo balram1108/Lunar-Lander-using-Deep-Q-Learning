@@ -57,7 +57,7 @@ for step_number in range(500):
     # Take that action in Lunar Lander
     observation, reward, terminated, truncated, info = env.step(action)
 
-    print(f"Step: {step_number} | Action: {action} | Q-values: {q_values} | Observation: {observation} | Reward: {reward} | Terminated: {terminated} | Truncated: {truncated}")
+    print(f"Step:{step_number} | Action: {action} | Q-values: {q_values} | Observation: {observation} | Reward: {reward} | Terminated: {terminated} | Truncated: {truncated}")
 
     if terminated or truncated:
         print("Episode finished.")
