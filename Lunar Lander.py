@@ -2,10 +2,12 @@ import gymnasium as gym
 import torch
 import torch.nn as nn
 
+from collections import deque
 
-# -------------------------
-# Neural Network
-# -------------------------
+
+# -----------------------------------
+# 1. Create DQN neural network
+# -----------------------------------
 
 class DQN(nn.Module):
 
@@ -29,42 +31,59 @@ class DQN(nn.Module):
 dqn = DQN()
 
 
-# -------------------------
-# Lunar Lander
-# -------------------------
+# -----------------------------------
+# 2. Create Replay Buffer
+# -----------------------------------
 
-env = gym.make("LunarLander-v3", render_mode="human")
+replay_buffer = deque(maxlen=10000)
 
-# Starting state
+
+# -----------------------------------
+# 3. Create Lunar Lander
+# -----------------------------------
+
+env = gym.make(
+    "LunarLander-v3",
+    render_mode="human"
+)
+
 state, info = env.reset()
 
 
-# -------------------------
-# Run one episode
-# -------------------------
+# -----------------------------------
+# 4. Run one episode
+# -----------------------------------
 
 for step_number in range(500):
 
-    # 1. Convert current state so PyTorch can use it
-    state_tensor = torch.tensor(state, dtype=torch.float32)
+    # Convert current state to PyTorch tensor
+    state_tensor = torch.tensor(
+        state,
+        dtype=torch.float32
+    )
 
-    # 2. Neural network gives 4 Q-values
+
+    # Neural network predicts 4 Q-values
     q_values = dqn(state_tensor)
 
-    # 3. Choose the action with the highest Q-value
+
+    # Choose action with highest Q-value
     action = torch.argmax(q_values).item()
 
-    # 4. Perform the action
-    # Gymnasium gives us:
-    # next state + reward
+
+    # Take action in environment
     next_state, reward, terminated, truncated, info = env.step(action)
 
-    # 5. Check whether the episode finished
+
+    # Check if episode ended
     done = terminated or truncated
 
 
-    # 6. This is ONE complete experience
-    transition = (
+    # -----------------------------------
+    # 5. Save experience in Replay Buffer
+    # -----------------------------------
+
+    experience = (
         state,
         action,
         reward,
@@ -72,22 +91,43 @@ for step_number in range(500):
         done
     )
 
+    replay_buffer.append(experience)
 
-    # Show what happened
-    print("STATE:", state)
-    print("ACTION:", action)
-    print("REWARD:", reward)
-    print("NEXT STATE:", next_state)
-    print("DONE:", done)
+
+    # -----------------------------------
+    # 6. Print what happened
+    # -----------------------------------
+
+    print("Step:", step_number)
+
+    print("State:")
+    print(state)
+
+    print("Action:")
+    print(action)
+
+    print("Reward:")
+    print(reward)
+
+    print("Next State:")
+    print(next_state)
+
+    print("Done:")
+    print(done)
+
+    print("Replay Buffer Size:")
+    print(len(replay_buffer))
+
     print("------------------------")
 
 
+    # Stop if episode finished
     if done:
+        print("Episode finished.")
         break
 
 
-    # 7. Move forward:
-    # next_state now becomes our new current state
+    # Move to next state
     state = next_state
 
 
