@@ -32,14 +32,21 @@ dqn = DQN()
 
 
 # -----------------------------------
-# 2. Create Replay Buffer
+# 2. Replay Buffer
 # -----------------------------------
 
 replay_buffer = deque(maxlen=10000)
 
 
 # -----------------------------------
-# 3. Create Lunar Lander
+# 3. Discount factor
+# -----------------------------------
+
+gamma = 0.99
+
+
+# -----------------------------------
+# 4. Create Lunar Lander
 # -----------------------------------
 
 env = gym.make(
@@ -51,37 +58,47 @@ state, info = env.reset()
 
 
 # -----------------------------------
-# 4. Run one episode
+# 5. Run one episode
 # -----------------------------------
 
 for step_number in range(500):
 
-    # Convert current state to PyTorch tensor
+    # -------------------------------
+    # CURRENT STATE
+    # -------------------------------
+
     state_tensor = torch.tensor(
         state,
         dtype=torch.float32
     )
 
 
-    # Neural network predicts 4 Q-values
+    # -------------------------------
+    # GET CURRENT Q-VALUES
+    # -------------------------------
+
     q_values = dqn(state_tensor)
 
 
-    # Choose action with highest Q-value
+    # -------------------------------
+    # CHOOSE ACTION
+    # -------------------------------
+
     action = torch.argmax(q_values).item()
 
 
-    # Take action in environment
+    # -------------------------------
+    # TAKE ACTION
+    # -------------------------------
+
     next_state, reward, terminated, truncated, info = env.step(action)
 
-
-    # Check if episode ended
     done = terminated or truncated
 
 
-    # -----------------------------------
-    # 5. Save experience in Replay Buffer
-    # -----------------------------------
+    # -------------------------------
+    # SAVE EXPERIENCE
+    # -------------------------------
 
     experience = (
         state,
@@ -94,14 +111,46 @@ for step_number in range(500):
     replay_buffer.append(experience)
 
 
+    # ===================================
+    # 6. CALCULATE THE TARGET
+    # ===================================
+
+    next_state_tensor = torch.tensor(
+        next_state,
+        dtype=torch.float32
+    )
+
+
+    # We do not want to update weights yet.
+    # We only want the next state's Q-values.
+    with torch.no_grad():
+
+        next_q_values = dqn(next_state_tensor)
+
+        best_next_q_value = torch.max(next_q_values).item()
+
+
+    # If episode ended, there is no future reward
+    if done:
+
+        target = reward
+
+    else:
+
+        target = reward + gamma * best_next_q_value
+
+
     # -----------------------------------
-    # 6. Print what happened
+    # PRINT EVERYTHING
     # -----------------------------------
 
     print("Step:", step_number)
 
     print("State:")
     print(state)
+
+    print("Q-values:")
+    print(q_values)
 
     print("Action:")
     print(action)
@@ -112,22 +161,27 @@ for step_number in range(500):
     print("Next State:")
     print(next_state)
 
+    print("Next Q-values:")
+    print(next_q_values)
+
+    print("Best Next Q-value:")
+    print(best_next_q_value)
+
+    print("TARGET:")
+    print(target)
+
     print("Done:")
     print(done)
-
-    print("Replay Buffer Size:")
-    print(len(replay_buffer))
 
     print("------------------------")
 
 
-    # Stop if episode finished
     if done:
         print("Episode finished.")
         break
 
 
-    # Move to next state
+    # next state becomes current state
     state = next_state
 
 
