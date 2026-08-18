@@ -1,12 +1,13 @@
 import gymnasium as gym
 import torch
 import torch.nn as nn
+import random                       # NEW
 
 from collections import deque
 
 
 # -----------------------------------
-# 1. Create DQN neural network
+# 1. CREATE DQN NEURAL NETWORK
 # -----------------------------------
 
 class DQN(nn.Module):
@@ -15,6 +16,7 @@ class DQN(nn.Module):
         super().__init__()
 
         self.network = nn.Sequential(
+
             nn.Linear(8, 64),
             nn.ReLU(),
 
@@ -32,21 +34,28 @@ dqn = DQN()
 
 
 # -----------------------------------
-# 2. Replay Buffer
+# 2. CREATE REPLAY BUFFER
 # -----------------------------------
 
 replay_buffer = deque(maxlen=10000)
 
 
 # -----------------------------------
-# 3. Discount factor
+# 3. DISCOUNT FACTOR
 # -----------------------------------
 
 gamma = 0.99
 
 
 # -----------------------------------
-# 4. Create Lunar Lander
+# 4. BATCH SIZE
+# -----------------------------------
+
+batch_size = 32                     # NEW
+
+
+# -----------------------------------
+# 5. CREATE LUNAR LANDER
 # -----------------------------------
 
 env = gym.make(
@@ -58,14 +67,15 @@ state, info = env.reset()
 
 
 # -----------------------------------
-# 5. Run one episode
+# 6. RUN ONE EPISODE
 # -----------------------------------
 
 for step_number in range(500):
 
-    # -------------------------------
+
+    # --------------------------------
     # CURRENT STATE
-    # -------------------------------
+    # --------------------------------
 
     state_tensor = torch.tensor(
         state,
@@ -73,32 +83,32 @@ for step_number in range(500):
     )
 
 
-    # -------------------------------
-    # GET CURRENT Q-VALUES
-    # -------------------------------
+    # --------------------------------
+    # GET Q-VALUES
+    # --------------------------------
 
     q_values = dqn(state_tensor)
 
 
-    # -------------------------------
-    # CHOOSE ACTION
-    # -------------------------------
+    # --------------------------------
+    # CHOOSE HIGHEST Q-VALUE ACTION
+    # --------------------------------
 
     action = torch.argmax(q_values).item()
 
 
-    # -------------------------------
+    # --------------------------------
     # TAKE ACTION
-    # -------------------------------
+    # --------------------------------
 
     next_state, reward, terminated, truncated, info = env.step(action)
 
     done = terminated or truncated
 
 
-    # -------------------------------
-    # SAVE EXPERIENCE
-    # -------------------------------
+    # --------------------------------
+    # STORE EXPERIENCE
+    # --------------------------------
 
     experience = (
         state,
@@ -111,9 +121,23 @@ for step_number in range(500):
     replay_buffer.append(experience)
 
 
-    # ===================================
-    # 6. CALCULATE THE TARGET
-    # ===================================
+    # =========================================
+    # 7. NEW: SAMPLE FROM REPLAY BUFFER
+    # =========================================
+
+    if len(replay_buffer) >= batch_size:
+
+        batch = random.sample(
+            replay_buffer,
+            batch_size
+        )
+
+        print("Random batch collected:", len(batch))
+
+
+    # --------------------------------
+    # CALCULATE TARGET
+    # --------------------------------
 
     next_state_tensor = torch.tensor(
         next_state,
@@ -121,16 +145,15 @@ for step_number in range(500):
     )
 
 
-    # We do not want to update weights yet.
-    # We only want the next state's Q-values.
     with torch.no_grad():
 
         next_q_values = dqn(next_state_tensor)
 
-        best_next_q_value = torch.max(next_q_values).item()
+        best_next_q_value = torch.max(
+            next_q_values
+        ).item()
 
 
-    # If episode ended, there is no future reward
     if done:
 
         target = reward
@@ -140,9 +163,9 @@ for step_number in range(500):
         target = reward + gamma * best_next_q_value
 
 
-    # -----------------------------------
-    # PRINT EVERYTHING
-    # -----------------------------------
+    # --------------------------------
+    # PRINT
+    # --------------------------------
 
     print("Step:", step_number)
 
@@ -161,27 +184,29 @@ for step_number in range(500):
     print("Next State:")
     print(next_state)
 
-    print("Next Q-values:")
-    print(next_q_values)
-
-    print("Best Next Q-value:")
-    print(best_next_q_value)
-
-    print("TARGET:")
+    print("Target:")
     print(target)
 
-    print("Done:")
-    print(done)
+    print("Replay Buffer Size:")
+    print(len(replay_buffer))
 
     print("------------------------")
 
 
+    # --------------------------------
+    # END EPISODE
+    # --------------------------------
+
     if done:
+
         print("Episode finished.")
         break
 
 
-    # next state becomes current state
+    # --------------------------------
+    # NEXT STATE BECOMES CURRENT STATE
+    # --------------------------------
+
     state = next_state
 
 
