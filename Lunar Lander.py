@@ -1,7 +1,7 @@
 import gymnasium as gym
 import torch
 import torch.nn as nn
-import random                       # NEW
+import random
 
 from collections import deque
 
@@ -51,7 +51,7 @@ gamma = 0.99
 # 4. BATCH SIZE
 # -----------------------------------
 
-batch_size = 32                     # NEW
+batch_size = 32
 
 
 # -----------------------------------
@@ -74,7 +74,7 @@ for step_number in range(500):
 
 
     # --------------------------------
-    # CURRENT STATE
+    # CURRENT STATE -> TENSOR
     # --------------------------------
 
     state_tensor = torch.tensor(
@@ -91,14 +91,14 @@ for step_number in range(500):
 
 
     # --------------------------------
-    # CHOOSE HIGHEST Q-VALUE ACTION
+    # CHOOSE ACTION
     # --------------------------------
 
     action = torch.argmax(q_values).item()
 
 
     # --------------------------------
-    # TAKE ACTION
+    # TAKE ACTION IN ENVIRONMENT
     # --------------------------------
 
     next_state, reward, terminated, truncated, info = env.step(action)
@@ -122,7 +122,7 @@ for step_number in range(500):
 
 
     # =========================================
-    # 7. NEW: SAMPLE FROM REPLAY BUFFER
+    # 7. SAMPLE RANDOM EXPERIENCES
     # =========================================
 
     if len(replay_buffer) >= batch_size:
@@ -132,11 +132,32 @@ for step_number in range(500):
             batch_size
         )
 
-        print("Random batch collected:", len(batch))
+
+        # =====================================
+        # 8. SPLIT BATCH INTO 5 GROUPS
+        # =====================================
+
+        states, actions, rewards, next_states, dones = zip(*batch)
+
+
+        print("BATCH STATES:")
+        print(states)
+
+        print("BATCH ACTIONS:")
+        print(actions)
+
+        print("BATCH REWARDS:")
+        print(rewards)
+
+        print("BATCH NEXT STATES:")
+        print(next_states)
+
+        print("BATCH DONES:")
+        print(dones)
 
 
     # --------------------------------
-    # CALCULATE TARGET
+    # CALCULATE TARGET FOR CURRENT STEP
     # --------------------------------
 
     next_state_tensor = torch.tensor(
@@ -164,10 +185,11 @@ for step_number in range(500):
 
 
     # --------------------------------
-    # PRINT
+    # PRINT CURRENT STEP
     # --------------------------------
 
-    print("Step:", step_number)
+    print("Step:")
+    print(step_number)
 
     print("State:")
     print(state)
