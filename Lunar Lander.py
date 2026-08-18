@@ -37,8 +37,6 @@ dqn = DQN()
 # -----------------------------------
 # 2. CREATE OPTIMIZER
 # -----------------------------------
-# NEW
-# Adam will update the weights
 
 optimizer = torch.optim.Adam(
     dqn.parameters(),
@@ -68,14 +66,24 @@ batch_size = 32
 
 
 # -----------------------------------
-# 6. LOSS FUNCTION
+# 6. EPSILON
+# -----------------------------------
+# NEW
+# 10% random action
+# 90% highest Q-value
+
+epsilon = 0.10
+
+
+# -----------------------------------
+# 7. LOSS FUNCTION
 # -----------------------------------
 
 loss_function = nn.MSELoss()
 
 
 # -----------------------------------
-# 7. CREATE LUNAR LANDER
+# 8. CREATE LUNAR LANDER
 # -----------------------------------
 
 env = gym.make(
@@ -87,7 +95,7 @@ state, info = env.reset()
 
 
 # -----------------------------------
-# 8. RUN ONE EPISODE
+# 9. RUN ONE EPISODE
 # -----------------------------------
 
 for step_number in range(500):
@@ -110,11 +118,30 @@ for step_number in range(500):
     q_values = dqn(state_tensor)
 
 
-    # --------------------------------
-    # CHOOSE HIGHEST Q-VALUE ACTION
-    # --------------------------------
+    # =========================================
+    # 10. EPSILON-GREEDY ACTION SELECTION
+    # =========================================
+    # NEW
 
-    action = torch.argmax(q_values).item()
+    if random.random() < epsilon:
+
+        # EXPLORE
+        # Choose a random action
+
+        action = env.action_space.sample()
+
+        print("Random action - exploring")
+
+    else:
+
+        # EXPLOIT
+        # Choose highest Q-value
+
+        action = torch.argmax(
+            q_values
+        ).item()
+
+        print("Highest Q-value action - exploiting")
 
 
     # --------------------------------
@@ -142,7 +169,7 @@ for step_number in range(500):
 
 
     # =========================================
-    # 9. SAMPLE FROM REPLAY BUFFER
+    # 11. SAMPLE FROM REPLAY BUFFER
     # =========================================
 
     if len(replay_buffer) >= batch_size:
@@ -161,7 +188,7 @@ for step_number in range(500):
 
 
         # -----------------------------------
-        # CONVERT EVERYTHING TO TENSORS
+        # CONVERT TO TENSORS
         # -----------------------------------
 
         states_tensor = torch.tensor(
@@ -191,13 +218,15 @@ for step_number in range(500):
 
 
         # ===================================
-        # 10. PREDICT Q-VALUES
+        # 12. GET PREDICTED Q-VALUES
         # ===================================
 
-        all_q_values = dqn(states_tensor)
+        all_q_values = dqn(
+            states_tensor
+        )
 
 
-        # Get Q-value for the action
+        # Get the Q-value for the action
         # that was actually taken
 
         predicted_q_values = all_q_values.gather(
@@ -207,12 +236,15 @@ for step_number in range(500):
 
 
         # ===================================
-        # 11. CALCULATE TARGET
+        # 13. CALCULATE TARGET Q-VALUES
         # ===================================
 
         with torch.no_grad():
 
-            next_q_values = dqn(next_states_tensor)
+            next_q_values = dqn(
+                next_states_tensor
+            )
+
 
             best_next_q_values = next_q_values.max(
                 dim=1
@@ -229,7 +261,7 @@ for step_number in range(500):
 
 
         # ===================================
-        # 12. CALCULATE LOSS
+        # 14. CALCULATE LOSS
         # ===================================
 
         loss = loss_function(
@@ -239,26 +271,18 @@ for step_number in range(500):
 
 
         # ===================================
-        # 13. BACKPROPAGATION
+        # 15. BACKPROPAGATION
         # ===================================
 
-        # NEW
-        # Clear old gradients
         optimizer.zero_grad()
 
-
-        # NEW
-        # Calculate gradients
         loss.backward()
 
-
-        # NEW
-        # Update the weights
         optimizer.step()
 
 
         # -----------------------------------
-        # PRINT TRAINING INFORMATION
+        # TRAINING INFORMATION
         # -----------------------------------
 
         print("Predicted Q-values:")
@@ -270,17 +294,21 @@ for step_number in range(500):
         print("Loss:")
         print(loss.item())
 
-        print("WEIGHTS UPDATED")
+        print("Weights updated")
 
 
     # -----------------------------------
     # PRINT CURRENT STEP
     # -----------------------------------
 
-    print("Step:", step_number)
+    print("Step:")
+    print(step_number)
 
     print("State:")
     print(state)
+
+    print("Q-values:")
+    print(q_values)
 
     print("Action:")
     print(action)
