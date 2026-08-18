@@ -2,6 +2,7 @@ import gymnasium as gym
 import torch
 import torch.nn as nn
 import random
+import numpy as np
 
 from collections import deque
 
@@ -55,7 +56,14 @@ batch_size = 32
 
 
 # -----------------------------------
-# 5. CREATE LUNAR LANDER
+# 5. LOSS FUNCTION
+# -----------------------------------
+
+loss_function = nn.MSELoss()
+
+
+# -----------------------------------
+# 6. CREATE LUNAR LANDER
 # -----------------------------------
 
 env = gym.make(
@@ -67,7 +75,7 @@ state, info = env.reset()
 
 
 # -----------------------------------
-# 6. RUN ONE EPISODE
+# 7. RUN ONE EPISODE
 # -----------------------------------
 
 for step_number in range(500):
@@ -98,7 +106,7 @@ for step_number in range(500):
 
 
     # --------------------------------
-    # TAKE ACTION IN ENVIRONMENT
+    # TAKE ACTION
     # --------------------------------
 
     next_state, reward, terminated, truncated, info = env.step(action)
@@ -122,7 +130,7 @@ for step_number in range(500):
 
 
     # =========================================
-    # 7. SAMPLE RANDOM EXPERIENCES
+    # 8. SAMPLE FROM REPLAY BUFFER
     # =========================================
 
     if len(replay_buffer) >= batch_size:
@@ -133,69 +141,105 @@ for step_number in range(500):
         )
 
 
-        # =====================================
-        # 8. SPLIT BATCH INTO 5 GROUPS
-        # =====================================
+        # -----------------------------------
+        # SPLIT THE BATCH
+        # -----------------------------------
 
         states, actions, rewards, next_states, dones = zip(*batch)
 
 
-        print("BATCH STATES:")
-        print(states)
+        # -----------------------------------
+        # CONVERT BATCH TO TENSORS
+        # -----------------------------------
 
-        print("BATCH ACTIONS:")
-        print(actions)
+        states_tensor = torch.tensor(
+            np.array(states),
+            dtype=torch.float32
+        )
 
-        print("BATCH REWARDS:")
-        print(rewards)
+        actions_tensor = torch.tensor(
+            actions,
+            dtype=torch.long
+        )
 
-        print("BATCH NEXT STATES:")
-        print(next_states)
+        rewards_tensor = torch.tensor(
+            rewards,
+            dtype=torch.float32
+        )
 
-        print("BATCH DONES:")
-        print(dones)
+        next_states_tensor = torch.tensor(
+            np.array(next_states),
+            dtype=torch.float32
+        )
 
-
-    # --------------------------------
-    # CALCULATE TARGET FOR CURRENT STEP
-    # --------------------------------
-
-    next_state_tensor = torch.tensor(
-        next_state,
-        dtype=torch.float32
-    )
-
-
-    with torch.no_grad():
-
-        next_q_values = dqn(next_state_tensor)
-
-        best_next_q_value = torch.max(
-            next_q_values
-        ).item()
+        dones_tensor = torch.tensor(
+            dones,
+            dtype=torch.float32
+        )
 
 
-    if done:
+        # ===================================
+        # 9. GET PREDICTED Q-VALUES
+        # ===================================
 
-        target = reward
-
-    else:
-
-        target = reward + gamma * best_next_q_value
+        all_q_values = dqn(states_tensor)
 
 
-    # --------------------------------
+        # Pick the Q-value for the action
+        # that was actually taken
+
+        predicted_q_values = all_q_values.gather(
+            1,
+            actions_tensor.unsqueeze(1)
+        ).squeeze(1)
+
+
+        # ===================================
+        # 10. CALCULATE TARGET Q-VALUES
+        # ===================================
+
+        with torch.no_grad():
+
+            next_q_values = dqn(next_states_tensor)
+
+            best_next_q_values = next_q_values.max(
+                dim=1
+            ).values
+
+
+            targets = rewards_tensor + gamma * best_next_q_values * (
+                1 - dones_tensor
+            )
+
+
+        # ===================================
+        # 11. CALCULATE LOSS
+        # ===================================
+
+        loss = loss_function(
+            predicted_q_values,
+            targets
+        )
+
+
+        print("Predicted Q-values:")
+        print(predicted_q_values)
+
+        print("Targets:")
+        print(targets)
+
+        print("LOSS:")
+        print(loss.item())
+
+
+    # -----------------------------------
     # PRINT CURRENT STEP
-    # --------------------------------
+    # -----------------------------------
 
-    print("Step:")
-    print(step_number)
+    print("Step:", step_number)
 
     print("State:")
     print(state)
-
-    print("Q-values:")
-    print(q_values)
 
     print("Action:")
     print(action)
@@ -206,18 +250,15 @@ for step_number in range(500):
     print("Next State:")
     print(next_state)
 
-    print("Target:")
-    print(target)
-
     print("Replay Buffer Size:")
     print(len(replay_buffer))
 
     print("------------------------")
 
 
-    # --------------------------------
+    # -----------------------------------
     # END EPISODE
-    # --------------------------------
+    # -----------------------------------
 
     if done:
 
@@ -225,9 +266,9 @@ for step_number in range(500):
         break
 
 
-    # --------------------------------
+    # -----------------------------------
     # NEXT STATE BECOMES CURRENT STATE
-    # --------------------------------
+    # -----------------------------------
 
     state = next_state
 
