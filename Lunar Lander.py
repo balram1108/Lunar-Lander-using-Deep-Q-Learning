@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import random
 import numpy as np
+import csv
 
 from collections import deque
 
@@ -52,38 +53,25 @@ replay_buffer = deque(maxlen=10000)
 
 
 # -----------------------------------
-# 4. DISCOUNT FACTOR
+# 4. SETTINGS
 # -----------------------------------
 
 gamma = 0.99
 
-
-# -----------------------------------
-# 5. BATCH SIZE
-# -----------------------------------
-
 batch_size = 32
-
-
-# -----------------------------------
-# 6. EPSILON
-# -----------------------------------
-# NEW
-# 10% random action
-# 90% highest Q-value
 
 epsilon = 0.10
 
 
 # -----------------------------------
-# 7. LOSS FUNCTION
+# 5. LOSS FUNCTION
 # -----------------------------------
 
 loss_function = nn.MSELoss()
 
 
 # -----------------------------------
-# 8. CREATE LUNAR LANDER
+# 6. CREATE ENVIRONMENT
 # -----------------------------------
 
 env = gym.make(
@@ -91,255 +79,382 @@ env = gym.make(
     render_mode="human"
 )
 
-state, info = env.reset()
+
+# =========================================
+# 7. CREATE CSV REPORT FILE
+# =========================================
+
+report_file = open(
+    "training_report.csv",
+    "w",
+    newline=""
+)
+
+csv_writer = csv.writer(report_file)
 
 
-# -----------------------------------
-# 9. RUN ONE EPISODE
-# -----------------------------------
+# COLUMN NAMES
 
-for step_number in range(500):
+csv_writer.writerow([
+    "Episode",
+    "Total Reward",
+    "Steps",
+    "Final X",
+    "Final Y",
+    "Closest X To Center",
+    "Left Leg",
+    "Right Leg",
+    "Final Reward",
+    "Average Loss"
+])
 
 
-    # --------------------------------
-    # CURRENT STATE -> TENSOR
-    # --------------------------------
+# =========================================
+# 8. RUN MANY EPISODES
+# =========================================
 
-    state_tensor = torch.tensor(
-        state,
-        dtype=torch.float32
-    )
+for episode in range(500):
 
 
-    # --------------------------------
-    # STATE -> NEURAL NETWORK
-    # --------------------------------
+    # -----------------------------------
+    # RESET ENVIRONMENT
+    # -----------------------------------
 
-    q_values = dqn(state_tensor)
+    state, info = env.reset()
+
+
+    # -----------------------------------
+    # REPORT VARIABLES FOR THIS EPISODE
+    # -----------------------------------
+
+    episode_reward = 0
+
+    episode_losses = []
+
+    closest_x_to_center = abs(state[0])
+
+    final_reward = 0
+
+
+    # =====================================
+    # RUN STEPS
+    # =====================================
+
+    for step_number in range(500):
+
+
+        # --------------------------------
+        # STATE -> TENSOR
+        # --------------------------------
+
+        state_tensor = torch.tensor(
+            state,
+            dtype=torch.float32
+        )
+
+
+        # --------------------------------
+        # GET Q VALUES
+        # --------------------------------
+
+        q_values = dqn(state_tensor)
+
+
+        # =================================
+        # EPSILON-GREEDY ACTION
+        # =================================
+
+        if random.random() < epsilon:
+
+            # EXPLORE
+            action = env.action_space.sample()
+
+        else:
+
+            # EXPLOIT
+            action = torch.argmax(
+                q_values
+            ).item()
+
+
+        # --------------------------------
+        # TAKE ACTION
+        # --------------------------------
+
+        next_state, reward, terminated, truncated, info = env.step(action)
+
+        done = terminated or truncated
+
+
+        # =================================
+        # UPDATE REPORT INFORMATION
+        # =================================
+
+        episode_reward += reward
+
+        final_reward = reward
+
+
+        # Distance from center = |x|
+
+        current_x_distance = abs(
+            next_state[0]
+        )
+
+
+        if current_x_distance < closest_x_to_center:
+
+            closest_x_to_center = current_x_distance
+
+
+        # --------------------------------
+        # STORE EXPERIENCE
+        # --------------------------------
+
+        experience = (
+            state,
+            action,
+            reward,
+            next_state,
+            done
+        )
+
+        replay_buffer.append(experience)
+
+
+        # =================================
+        # SAMPLE FROM REPLAY BUFFER
+        # =================================
+
+        if len(replay_buffer) >= batch_size:
+
+            batch = random.sample(
+                replay_buffer,
+                batch_size
+            )
+
+
+            # --------------------------------
+            # SPLIT BATCH
+            # --------------------------------
+
+            states, actions, rewards, next_states, dones = zip(*batch)
+
+
+            # --------------------------------
+            # CONVERT TO TENSORS
+            # --------------------------------
+
+            states_tensor = torch.tensor(
+                np.array(states),
+                dtype=torch.float32
+            )
+
+            actions_tensor = torch.tensor(
+                actions,
+                dtype=torch.long
+            )
+
+            rewards_tensor = torch.tensor(
+                rewards,
+                dtype=torch.float32
+            )
+
+            next_states_tensor = torch.tensor(
+                np.array(next_states),
+                dtype=torch.float32
+            )
+
+            dones_tensor = torch.tensor(
+                dones,
+                dtype=torch.float32
+            )
+
+
+            # =================================
+            # PREDICTED Q VALUES
+            # =================================
+
+            all_q_values = dqn(
+                states_tensor
+            )
+
+
+            predicted_q_values = all_q_values.gather(
+                1,
+                actions_tensor.unsqueeze(1)
+            ).squeeze(1)
+
+
+            # =================================
+            # TARGET Q VALUES
+            # =================================
+
+            with torch.no_grad():
+
+                next_q_values = dqn(
+                    next_states_tensor
+                )
+
+
+                best_next_q_values = next_q_values.max(
+                    dim=1
+                ).values
+
+
+                targets = (
+                    rewards_tensor
+                    +
+                    gamma
+                    * best_next_q_values
+                    * (1 - dones_tensor)
+                )
+
+
+            # =================================
+            # LOSS
+            # =================================
+
+            loss = loss_function(
+                predicted_q_values,
+                targets
+            )
+
+
+            # SAVE LOSS FOR REPORT
+
+            episode_losses.append(
+                loss.item()
+            )
+
+
+            # =================================
+            # BACKPROPAGATION
+            # =================================
+
+            optimizer.zero_grad()
+
+            loss.backward()
+
+            optimizer.step()
+
+
+        # =================================
+        # END OF EPISODE
+        # =================================
+
+        if done:
+
+            break
+
+
+        # --------------------------------
+        # NEXT STATE -> CURRENT STATE
+        # --------------------------------
+
+        state = next_state
 
 
     # =========================================
-    # 10. EPSILON-GREEDY ACTION SELECTION
+    # 9. CREATE EPISODE REPORT
     # =========================================
-    # NEW
 
-    if random.random() < epsilon:
+    final_x = next_state[0]
 
-        # EXPLORE
-        # Choose a random action
+    final_y = next_state[1]
 
-        action = env.action_space.sample()
+    left_leg = next_state[6]
 
-        print("Random action - exploring")
+    right_leg = next_state[7]
+
+
+    if len(episode_losses) > 0:
+
+        average_loss = sum(
+            episode_losses
+        ) / len(episode_losses)
 
     else:
 
-        # EXPLOIT
-        # Choose highest Q-value
-
-        action = torch.argmax(
-            q_values
-        ).item()
-
-        print("Highest Q-value action - exploiting")
-
-
-    # --------------------------------
-    # TAKE ACTION
-    # --------------------------------
-
-    next_state, reward, terminated, truncated, info = env.step(action)
-
-    done = terminated or truncated
-
-
-    # --------------------------------
-    # STORE EXPERIENCE
-    # --------------------------------
-
-    experience = (
-        state,
-        action,
-        reward,
-        next_state,
-        done
-    )
-
-    replay_buffer.append(experience)
+        average_loss = 0
 
 
     # =========================================
-    # 11. SAMPLE FROM REPLAY BUFFER
+    # 10. PRINT REPORT IN PYCHARM
     # =========================================
 
-    if len(replay_buffer) >= batch_size:
+    print()
+    print("==============================")
+    print("EPISODE REPORT:", episode)
+    print("==============================")
 
-        batch = random.sample(
-            replay_buffer,
-            batch_size
-        )
+    print("Total Reward:")
+    print(episode_reward)
 
+    print("Steps:")
+    print(step_number + 1)
 
-        # -----------------------------------
-        # SPLIT BATCH
-        # -----------------------------------
+    print("Final X:")
+    print(final_x)
 
-        states, actions, rewards, next_states, dones = zip(*batch)
+    print("Final Y:")
+    print(final_y)
 
+    print("Closest X To Center:")
+    print(closest_x_to_center)
 
-        # -----------------------------------
-        # CONVERT TO TENSORS
-        # -----------------------------------
+    print("Left Leg:")
+    print(left_leg)
 
-        states_tensor = torch.tensor(
-            np.array(states),
-            dtype=torch.float32
-        )
+    print("Right Leg:")
+    print(right_leg)
 
-        actions_tensor = torch.tensor(
-            actions,
-            dtype=torch.long
-        )
+    print("Final Reward:")
+    print(final_reward)
 
-        rewards_tensor = torch.tensor(
-            rewards,
-            dtype=torch.float32
-        )
+    print("Average Loss:")
+    print(average_loss)
 
-        next_states_tensor = torch.tensor(
-            np.array(next_states),
-            dtype=torch.float32
-        )
-
-        dones_tensor = torch.tensor(
-            dones,
-            dtype=torch.float32
-        )
+    print("==============================")
+    print()
 
 
-        # ===================================
-        # 12. GET PREDICTED Q-VALUES
-        # ===================================
+    # =========================================
+    # 11. SAVE REPORT TO CSV
+    # =========================================
 
-        all_q_values = dqn(
-            states_tensor
-        )
+    csv_writer.writerow([
 
+        episode,
 
-        # Get the Q-value for the action
-        # that was actually taken
+        episode_reward,
 
-        predicted_q_values = all_q_values.gather(
-            1,
-            actions_tensor.unsqueeze(1)
-        ).squeeze(1)
+        step_number + 1,
 
+        final_x,
 
-        # ===================================
-        # 13. CALCULATE TARGET Q-VALUES
-        # ===================================
+        final_y,
 
-        with torch.no_grad():
+        closest_x_to_center,
 
-            next_q_values = dqn(
-                next_states_tensor
-            )
+        left_leg,
 
+        right_leg,
 
-            best_next_q_values = next_q_values.max(
-                dim=1
-            ).values
+        final_reward,
+
+        average_loss
+    ])
 
 
-            targets = (
-                rewards_tensor
-                +
-                gamma
-                * best_next_q_values
-                * (1 - dones_tensor)
-            )
+    # Save immediately
+    report_file.flush()
 
 
-        # ===================================
-        # 14. CALCULATE LOSS
-        # ===================================
+# -----------------------------------
+# CLOSE EVERYTHING
+# -----------------------------------
 
-        loss = loss_function(
-            predicted_q_values,
-            targets
-        )
-
-
-        # ===================================
-        # 15. BACKPROPAGATION
-        # ===================================
-
-        optimizer.zero_grad()
-
-        loss.backward()
-
-        optimizer.step()
-
-
-        # -----------------------------------
-        # TRAINING INFORMATION
-        # -----------------------------------
-
-        print("Predicted Q-values:")
-        print(predicted_q_values)
-
-        print("Targets:")
-        print(targets)
-
-        print("Loss:")
-        print(loss.item())
-
-        print("Weights updated")
-
-
-    # -----------------------------------
-    # PRINT CURRENT STEP
-    # -----------------------------------
-
-    print("Step:")
-    print(step_number)
-
-    print("State:")
-    print(state)
-
-    print("Q-values:")
-    print(q_values)
-
-    print("Action:")
-    print(action)
-
-    print("Reward:")
-    print(reward)
-
-    print("Next State:")
-    print(next_state)
-
-    print("Replay Buffer Size:")
-    print(len(replay_buffer))
-
-    print("------------------------")
-
-
-    # -----------------------------------
-    # END EPISODE
-    # -----------------------------------
-
-    if done:
-
-        print("Episode finished.")
-        break
-
-
-    # -----------------------------------
-    # NEXT STATE BECOMES CURRENT STATE
-    # -----------------------------------
-
-    state = next_state
-
+report_file.close()
 
 env.close()
