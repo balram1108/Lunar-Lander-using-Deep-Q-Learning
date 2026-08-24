@@ -49,7 +49,9 @@ optimizer = torch.optim.Adam(
 # 3. CREATE REPLAY BUFFER
 # -----------------------------------
 
-replay_buffer = deque(maxlen=10000)
+replay_buffer = deque(
+    maxlen=10000
+)
 
 
 # -----------------------------------
@@ -60,18 +62,30 @@ gamma = 0.99
 
 batch_size = 32
 
-epsilon = 0.10
+
+# ===================================
+# 5. EPSILON SETTINGS
+# ===================================
+
+# Start with lots of exploration
+epsilon = 1.0
+
+# Never go below 5% random actions
+epsilon_min = 0.05
+
+# Decrease epsilon after every episode
+epsilon_decay = 0.995
 
 
 # -----------------------------------
-# 5. LOSS FUNCTION
+# 6. LOSS FUNCTION
 # -----------------------------------
 
 loss_function = nn.MSELoss()
 
 
 # -----------------------------------
-# 6. CREATE ENVIRONMENT
+# 7. CREATE ENVIRONMENT
 # -----------------------------------
 
 env = gym.make(
@@ -80,23 +94,25 @@ env = gym.make(
 )
 
 
-# =========================================
-# 7. CREATE CSV REPORT FILE
-# =========================================
+# ===================================
+# 8. CREATE CSV REPORT
+# ===================================
 
 report_file = open(
-    "training_report.csv",
+    "training_report_epsilon_decay.csv",
     "w",
     newline=""
 )
 
-csv_writer = csv.writer(report_file)
+csv_writer = csv.writer(
+    report_file
+)
 
-
-# COLUMN NAMES
 
 csv_writer.writerow([
+
     "Episode",
+    "Epsilon",
     "Total Reward",
     "Steps",
     "Final X",
@@ -106,46 +122,53 @@ csv_writer.writerow([
     "Right Leg",
     "Final Reward",
     "Average Loss"
+
 ])
 
 
-# =========================================
-# 8. RUN MANY EPISODES
-# =========================================
+# ===================================
+# 9. RUN MANY EPISODES
+# ===================================
 
 for episode in range(500):
 
 
-    # -----------------------------------
+    # --------------------------------
     # RESET ENVIRONMENT
-    # -----------------------------------
+    # --------------------------------
 
     state, info = env.reset()
 
 
-    # -----------------------------------
-    # REPORT VARIABLES FOR THIS EPISODE
-    # -----------------------------------
+    # --------------------------------
+    # REPORT VARIABLES
+    # --------------------------------
 
     episode_reward = 0
 
     episode_losses = []
 
-    closest_x_to_center = abs(state[0])
+    closest_x_to_center = abs(
+        state[0]
+    )
 
     final_reward = 0
 
 
-    # =====================================
-    # RUN STEPS
-    # =====================================
+    # Save epsilon used for THIS episode
+    episode_epsilon = epsilon
+
+
+    # =================================
+    # 10. RUN STEPS
+    # =================================
 
     for step_number in range(500):
 
 
-        # --------------------------------
+        # -----------------------------
         # STATE -> TENSOR
-        # --------------------------------
+        # -----------------------------
 
         state_tensor = torch.tensor(
             state,
@@ -153,15 +176,17 @@ for episode in range(500):
         )
 
 
-        # --------------------------------
+        # -----------------------------
         # GET Q VALUES
-        # --------------------------------
+        # -----------------------------
 
-        q_values = dqn(state_tensor)
+        q_values = dqn(
+            state_tensor
+        )
 
 
         # =================================
-        # EPSILON-GREEDY ACTION
+        # 11. EPSILON-GREEDY ACTION
         # =================================
 
         if random.random() < epsilon:
@@ -177,11 +202,13 @@ for episode in range(500):
             ).item()
 
 
-        # --------------------------------
+        # -----------------------------
         # TAKE ACTION
-        # --------------------------------
+        # -----------------------------
 
-        next_state, reward, terminated, truncated, info = env.step(action)
+        next_state, reward, terminated, truncated, info = env.step(
+            action
+        )
 
         done = terminated or truncated
 
@@ -195,8 +222,6 @@ for episode in range(500):
         final_reward = reward
 
 
-        # Distance from center = |x|
-
         current_x_distance = abs(
             next_state[0]
         )
@@ -207,23 +232,27 @@ for episode in range(500):
             closest_x_to_center = current_x_distance
 
 
-        # --------------------------------
+        # -----------------------------
         # STORE EXPERIENCE
-        # --------------------------------
+        # -----------------------------
 
         experience = (
+
             state,
             action,
             reward,
             next_state,
             done
+
         )
 
-        replay_buffer.append(experience)
+        replay_buffer.append(
+            experience
+        )
 
 
         # =================================
-        # SAMPLE FROM REPLAY BUFFER
+        # 12. SAMPLE REPLAY BUFFER
         # =================================
 
         if len(replay_buffer) >= batch_size:
@@ -234,36 +263,42 @@ for episode in range(500):
             )
 
 
-            # --------------------------------
+            # -----------------------------
             # SPLIT BATCH
-            # --------------------------------
+            # -----------------------------
 
-            states, actions, rewards, next_states, dones = zip(*batch)
+            states, actions, rewards, next_states, dones = zip(
+                *batch
+            )
 
 
-            # --------------------------------
+            # -----------------------------
             # CONVERT TO TENSORS
-            # --------------------------------
+            # -----------------------------
 
             states_tensor = torch.tensor(
                 np.array(states),
                 dtype=torch.float32
             )
 
+
             actions_tensor = torch.tensor(
                 actions,
                 dtype=torch.long
             )
+
 
             rewards_tensor = torch.tensor(
                 rewards,
                 dtype=torch.float32
             )
 
+
             next_states_tensor = torch.tensor(
                 np.array(next_states),
                 dtype=torch.float32
             )
+
 
             dones_tensor = torch.tensor(
                 dones,
@@ -272,7 +307,7 @@ for episode in range(500):
 
 
             # =================================
-            # PREDICTED Q VALUES
+            # 13. PREDICTED Q VALUES
             # =================================
 
             all_q_values = dqn(
@@ -281,13 +316,16 @@ for episode in range(500):
 
 
             predicted_q_values = all_q_values.gather(
+
                 1,
+
                 actions_tensor.unsqueeze(1)
+
             ).squeeze(1)
 
 
             # =================================
-            # TARGET Q VALUES
+            # 14. TARGET Q VALUES
             # =================================
 
             with torch.no_grad():
@@ -303,25 +341,30 @@ for episode in range(500):
 
 
                 targets = (
+
                     rewards_tensor
+
                     +
+
                     gamma
                     * best_next_q_values
                     * (1 - dones_tensor)
+
                 )
 
 
             # =================================
-            # LOSS
+            # 15. LOSS
             # =================================
 
             loss = loss_function(
+
                 predicted_q_values,
+
                 targets
+
             )
 
-
-            # SAVE LOSS FOR REPORT
 
             episode_losses.append(
                 loss.item()
@@ -329,7 +372,7 @@ for episode in range(500):
 
 
             # =================================
-            # BACKPROPAGATION
+            # 16. BACKPROPAGATION
             # =================================
 
             optimizer.zero_grad()
@@ -340,7 +383,7 @@ for episode in range(500):
 
 
         # =================================
-        # END OF EPISODE
+        # END EPISODE
         # =================================
 
         if done:
@@ -348,16 +391,16 @@ for episode in range(500):
             break
 
 
-        # --------------------------------
-        # NEXT STATE -> CURRENT STATE
-        # --------------------------------
+        # -----------------------------
+        # NEXT STATE BECOMES STATE
+        # -----------------------------
 
         state = next_state
 
 
-    # =========================================
-    # 9. CREATE EPISODE REPORT
-    # =========================================
+    # ===================================
+    # 17. EPISODE REPORT
+    # ===================================
 
     final_x = next_state[0]
 
@@ -370,62 +413,84 @@ for episode in range(500):
 
     if len(episode_losses) > 0:
 
-        average_loss = sum(
-            episode_losses
-        ) / len(episode_losses)
+        average_loss = (
+            sum(episode_losses)
+            /
+            len(episode_losses)
+        )
 
     else:
 
         average_loss = 0
 
 
-    # =========================================
-    # 10. PRINT REPORT IN PYCHARM
-    # =========================================
+    # ===================================
+    # 18. PRINT REPORT
+    # ===================================
 
     print()
+
     print("==============================")
+
     print("EPISODE REPORT:", episode)
+
     print("==============================")
+
+
+    print("Epsilon:")
+    print(episode_epsilon)
+
 
     print("Total Reward:")
     print(episode_reward)
 
+
     print("Steps:")
     print(step_number + 1)
+
 
     print("Final X:")
     print(final_x)
 
+
     print("Final Y:")
     print(final_y)
+
 
     print("Closest X To Center:")
     print(closest_x_to_center)
 
+
     print("Left Leg:")
     print(left_leg)
+
 
     print("Right Leg:")
     print(right_leg)
 
+
     print("Final Reward:")
     print(final_reward)
+
 
     print("Average Loss:")
     print(average_loss)
 
+
     print("==============================")
+
     print()
 
 
-    # =========================================
-    # 11. SAVE REPORT TO CSV
-    # =========================================
+    # ===================================
+    # 19. SAVE REPORT TO CSV
+    # ===================================
 
     csv_writer.writerow([
 
         episode,
+
+        episode_epsilon,
 
         episode_reward,
 
@@ -444,11 +509,24 @@ for episode in range(500):
         final_reward,
 
         average_loss
+
     ])
 
 
-    # Save immediately
     report_file.flush()
+
+
+    # ===================================
+    # 20. DECREASE EPSILON
+    # ===================================
+
+    epsilon = max(
+
+        epsilon_min,
+
+        epsilon * epsilon_decay
+
+    )
 
 
 # -----------------------------------
