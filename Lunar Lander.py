@@ -8,9 +8,9 @@ import csv
 from collections import deque
 
 
-# -----------------------------------
+# ===================================
 # 1. CREATE DQN NEURAL NETWORK
-# -----------------------------------
+# ===================================
 
 class DQN(nn.Module):
 
@@ -32,12 +32,31 @@ class DQN(nn.Module):
         return self.network(x)
 
 
+# ===================================
+# 2. CREATE MAIN DQN
+# ===================================
+
 dqn = DQN()
 
 
-# -----------------------------------
-# 2. CREATE OPTIMIZER
-# -----------------------------------
+# ===================================
+# 3. CREATE TARGET DQN
+# ===================================
+
+target_dqn = DQN()
+
+# Start both networks with the SAME weights
+target_dqn.load_state_dict(
+    dqn.state_dict()
+)
+
+# Target network is only used for targets
+target_dqn.eval()
+
+
+# ===================================
+# 4. CREATE OPTIMIZER
+# ===================================
 
 optimizer = torch.optim.Adam(
     dqn.parameters(),
@@ -45,18 +64,18 @@ optimizer = torch.optim.Adam(
 )
 
 
-# -----------------------------------
-# 3. CREATE REPLAY BUFFER
-# -----------------------------------
+# ===================================
+# 5. CREATE REPLAY BUFFER
+# ===================================
 
 replay_buffer = deque(
     maxlen=10000
 )
 
 
-# -----------------------------------
-# 4. SETTINGS
-# -----------------------------------
+# ===================================
+# 6. SETTINGS
+# ===================================
 
 gamma = 0.99
 
@@ -64,29 +83,38 @@ batch_size = 32
 
 
 # ===================================
-# 5. EPSILON SETTINGS
+# 7. EPSILON SETTINGS
 # ===================================
 
-# Start with lots of exploration
 epsilon = 1.0
 
-# Never go below 5% random actions
 epsilon_min = 0.05
 
-# Decrease epsilon after every episode
 epsilon_decay = 0.995
 
 
-# -----------------------------------
-# 6. LOSS FUNCTION
-# -----------------------------------
+# ===================================
+# 8. TARGET NETWORK SETTINGS
+# ===================================
+
+# Copy main network weights into
+# target network every 1000 training updates
+
+target_update_frequency = 1000
+
+training_step = 0
+
+
+# ===================================
+# 9. LOSS FUNCTION
+# ===================================
 
 loss_function = nn.MSELoss()
 
 
-# -----------------------------------
-# 7. CREATE ENVIRONMENT
-# -----------------------------------
+# ===================================
+# 10. CREATE ENVIRONMENT
+# ===================================
 
 env = gym.make(
     "LunarLander-v3",
@@ -95,11 +123,11 @@ env = gym.make(
 
 
 # ===================================
-# 8. CREATE CSV REPORT
+# 11. CREATE CSV REPORT
 # ===================================
 
 report_file = open(
-    "training_report_epsilon_decay.csv",
+    "training_report_target_network.csv",
     "w",
     newline=""
 )
@@ -127,7 +155,7 @@ csv_writer.writerow([
 
 
 # ===================================
-# 9. RUN MANY EPISODES
+# 12. RUN EPISODES
 # ===================================
 
 for episode in range(500):
@@ -154,14 +182,12 @@ for episode in range(500):
 
     final_reward = 0
 
-
-    # Save epsilon used for THIS episode
     episode_epsilon = epsilon
 
 
-    # =================================
-    # 10. RUN STEPS
-    # =================================
+    # ===================================
+    # 13. RUN STEPS
+    # ===================================
 
     for step_number in range(500):
 
@@ -177,7 +203,7 @@ for episode in range(500):
 
 
         # -----------------------------
-        # GET Q VALUES
+        # MAIN NETWORK Q VALUES
         # -----------------------------
 
         q_values = dqn(
@@ -186,7 +212,7 @@ for episode in range(500):
 
 
         # =================================
-        # 11. EPSILON-GREEDY ACTION
+        # 14. EPSILON-GREEDY ACTION
         # =================================
 
         if random.random() < epsilon:
@@ -202,9 +228,9 @@ for episode in range(500):
             ).item()
 
 
-        # -----------------------------
-        # TAKE ACTION
-        # -----------------------------
+        # =================================
+        # 15. TAKE ACTION
+        # =================================
 
         next_state, reward, terminated, truncated, info = env.step(
             action
@@ -214,7 +240,7 @@ for episode in range(500):
 
 
         # =================================
-        # UPDATE REPORT INFORMATION
+        # 16. UPDATE REPORT
         # =================================
 
         episode_reward += reward
@@ -232,9 +258,9 @@ for episode in range(500):
             closest_x_to_center = current_x_distance
 
 
-        # -----------------------------
-        # STORE EXPERIENCE
-        # -----------------------------
+        # =================================
+        # 17. STORE EXPERIENCE
+        # =================================
 
         experience = (
 
@@ -252,20 +278,17 @@ for episode in range(500):
 
 
         # =================================
-        # 12. SAMPLE REPLAY BUFFER
+        # 18. TRAIN FROM REPLAY BUFFER
         # =================================
 
         if len(replay_buffer) >= batch_size:
+
 
             batch = random.sample(
                 replay_buffer,
                 batch_size
             )
 
-
-            # -----------------------------
-            # SPLIT BATCH
-            # -----------------------------
 
             states, actions, rewards, next_states, dones = zip(
                 *batch
@@ -307,7 +330,9 @@ for episode in range(500):
 
 
             # =================================
-            # 13. PREDICTED Q VALUES
+            # 19. CURRENT PREDICTION
+            #
+            # MAIN DQN
             # =================================
 
             all_q_values = dqn(
@@ -325,12 +350,14 @@ for episode in range(500):
 
 
             # =================================
-            # 14. TARGET Q VALUES
+            # 20. CALCULATE TD TARGET
+            #
+            # TARGET DQN
             # =================================
 
             with torch.no_grad():
 
-                next_q_values = dqn(
+                next_q_values = target_dqn(
                     next_states_tensor
                 )
 
@@ -354,7 +381,7 @@ for episode in range(500):
 
 
             # =================================
-            # 15. LOSS
+            # 21. CALCULATE LOSS
             # =================================
 
             loss = loss_function(
@@ -372,7 +399,7 @@ for episode in range(500):
 
 
             # =================================
-            # 16. BACKPROPAGATION
+            # 22. UPDATE MAIN DQN
             # =================================
 
             optimizer.zero_grad()
@@ -382,8 +409,30 @@ for episode in range(500):
             optimizer.step()
 
 
+            # =================================
+            # 23. COUNT TRAINING UPDATES
+            # =================================
+
+            training_step += 1
+
+
+            # =================================
+            # 24. UPDATE TARGET NETWORK
+            # =================================
+
+            if training_step % target_update_frequency == 0:
+
+                target_dqn.load_state_dict(
+                    dqn.state_dict()
+                )
+
+                print(
+                    "TARGET NETWORK UPDATED"
+                )
+
+
         # =================================
-        # END EPISODE
+        # 25. END EPISODE IF DONE
         # =================================
 
         if done:
@@ -392,14 +441,14 @@ for episode in range(500):
 
 
         # -----------------------------
-        # NEXT STATE BECOMES STATE
+        # STATE 2 BECOMES NEW STATE
         # -----------------------------
 
         state = next_state
 
 
     # ===================================
-    # 17. EPISODE REPORT
+    # 26. EPISODE REPORT
     # ===================================
 
     final_x = next_state[0]
@@ -414,9 +463,13 @@ for episode in range(500):
     if len(episode_losses) > 0:
 
         average_loss = (
+
             sum(episode_losses)
+
             /
+
             len(episode_losses)
+
         )
 
     else:
@@ -425,7 +478,7 @@ for episode in range(500):
 
 
     # ===================================
-    # 18. PRINT REPORT
+    # 27. PRINT REPORT
     # ===================================
 
     print()
@@ -483,7 +536,7 @@ for episode in range(500):
 
 
     # ===================================
-    # 19. SAVE REPORT TO CSV
+    # 28. SAVE REPORT TO CSV
     # ===================================
 
     csv_writer.writerow([
@@ -517,7 +570,7 @@ for episode in range(500):
 
 
     # ===================================
-    # 20. DECREASE EPSILON
+    # 29. DECAY EPSILON
     # ===================================
 
     epsilon = max(
@@ -529,9 +582,9 @@ for episode in range(500):
     )
 
 
-# -----------------------------------
-# CLOSE EVERYTHING
-# -----------------------------------
+# ===================================
+# 30. CLOSE EVERYTHING
+# ===================================
 
 report_file.close()
 
