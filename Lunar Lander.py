@@ -1,25 +1,23 @@
 import gymnasium as gym
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import random
 import numpy as np
 import csv
-import pandas as pd
-
 from collections import deque
+import pandas as pd
+import matplotlib.pyplot as plt
+import pygame
 
-from openpyxl import load_workbook
-from openpyxl.chart import LineChart, Reference
 
-
-# =========================================================
+# ============================================================
 # 1. DQN NEURAL NETWORK
-# =========================================================
+# ============================================================
 
 class DQN(nn.Module):
 
     def __init__(self):
-
         super().__init__()
 
         self.network = nn.Sequential(
@@ -34,338 +32,335 @@ class DQN(nn.Module):
         )
 
     def forward(self, x):
-
         return self.network(x)
 
 
-# =========================================================
-# 2. MAIN NETWORK
-# =========================================================
+# ============================================================
+# 2. MAIN DQN + TARGET DQN
+# ============================================================
 
 dqn = DQN()
-
-
-# =========================================================
-# 3. TARGET NETWORK
-# =========================================================
-
 target_dqn = DQN()
 
-
-# Start with same weights
-
-target_dqn.load_state_dict(
-    dqn.state_dict()
-)
-
-
+target_dqn.load_state_dict(dqn.state_dict())
 target_dqn.eval()
 
 
-# =========================================================
-# 4. OPTIMIZER
-# =========================================================
+# ============================================================
+# 3. OPTIMIZER + LOSS
+# ============================================================
 
-optimizer = torch.optim.Adam(
-
+optimizer = optim.Adam(
     dqn.parameters(),
-
     lr=0.001
 )
-
-
-# =========================================================
-# 5. REPLAY BUFFER
-# =========================================================
-
-replay_buffer = deque(
-
-    maxlen=10000
-)
-
-
-# =========================================================
-# 6. TRAINING SETTINGS
-# =========================================================
-
-gamma = 0.99
-
-batch_size = 32
-
-
-# =========================================================
-# 7. EPSILON DECAY
-# =========================================================
-
-epsilon = 1.0
-
-epsilon_min = 0.05
-
-epsilon_decay = 0.995
-
-
-# =========================================================
-# 8. TARGET NETWORK SETTINGS
-# =========================================================
-
-target_update_frequency = 1000
-
-training_step = 0
-
-
-# =========================================================
-# 9. LOSS FUNCTION
-# =========================================================
 
 loss_function = nn.MSELoss()
 
 
-# =========================================================
-# 10. ENVIRONMENT
-# =========================================================
+# ============================================================
+# 4. REPLAY BUFFER
+# ============================================================
+
+replay_buffer = deque(maxlen=10000)
+
+batch_size = 32
+
+
+# ============================================================
+# 5. DQN SETTINGS
+# ============================================================
+
+gamma = 0.99
+
+epsilon = 1.0
+epsilon_min = 0.05
+epsilon_decay = 0.995
+
+number_of_episodes = 500
+
+training_step = 0
+
+target_update_frequency = 1000
+
+
+# ============================================================
+# 6. SOFT-LANDING SETTINGS
+# ============================================================
+
+# Start caring more about vertical speed
+# when the lander is close to the ground.
+
+soft_landing_height = 0.30
+
+# Falling faster than this near the ground
+# gets an extra penalty.
+
+safe_vertical_speed = -0.20
+
+# Strength of the extra penalty.
+
+soft_landing_penalty_strength = 20.0
+
+
+# ============================================================
+# 7. CREATE ENVIRONMENT
+# ============================================================
 
 env = gym.make(
-
     "LunarLander-v3",
-
     render_mode="human"
 )
 
 
-# =========================================================
-# 11. TRAINING REPORT FILE
-# =========================================================
+# ============================================================
+# NEW: FONT FOR EPISODE NUMBER
+# ============================================================
 
-training_csv = "training_report_target_network.csv"
+pygame.font.init()
+
+episode_font = pygame.font.SysFont(
+    "Arial",
+    24,
+    bold=True
+)
 
 
-report_file = open(
+# ============================================================
+# 8. TRAINING REPORT
+# ============================================================
 
-    training_csv,
-
+training_file = open(
+    "training_report_soft_landing.csv",
     "w",
-
     newline=""
 )
 
+training_writer = csv.writer(training_file)
 
-csv_writer = csv.writer(
-    report_file
-)
-
-
-csv_writer.writerow([
-
+training_writer.writerow([
     "Episode",
     "Epsilon",
-    "Total Reward",
+    "Gym Reward",
+    "Training Reward",
     "Steps",
     "Final X",
     "Final Y",
+    "Final Vertical Velocity",
     "Closest X To Center",
     "Left Leg",
     "Right Leg",
     "Final Reward",
-    "Average Loss"
-
+    "Average Loss",
+    "Soft Landing Penalty"
 ])
 
 
-# =========================================================
-# 12. TRAIN FOR 500 EPISODES
-# =========================================================
+# ============================================================
+# 9. TRAINING
+# ============================================================
 
-for episode in range(500):
+training_rewards = []
+training_losses = []
 
+
+for episode in range(number_of_episodes):
 
     state, info = env.reset()
 
-
-    episode_reward = 0
+    gym_total_reward = 0
+    training_total_reward = 0
 
     episode_losses = []
 
-    closest_x_to_center = abs(
-        state[0]
-    )
+    total_soft_penalty = 0
+
+    closest_x = abs(state[0])
 
     final_reward = 0
 
-    episode_epsilon = epsilon
+    step_number = 0
 
 
-    # =====================================================
-    # RUN MAXIMUM 500 STEPS
-    # =====================================================
+    # --------------------------------------------------------
+    # RUN ONE EPISODE
+    # --------------------------------------------------------
 
     for step_number in range(500):
 
 
-        # -------------------------------------------------
-        # STATE -> TENSOR
-        # -------------------------------------------------
+        # ====================================================
+        # NEW: DISPLAY EPISODE NUMBER
+        # ====================================================
+
+        if env.unwrapped.screen is not None:
+
+            episode_text = episode_font.render(
+                f"Training Episode: {episode + 1} / {number_of_episodes}",
+                True,
+                (255, 255, 255)
+            )
+
+            env.unwrapped.screen.blit(
+                episode_text,
+                (20, 20)
+            )
+
+            pygame.display.update()
+
+
+        # ----------------------------------------------------
+        # STATE → TENSOR
+        # ----------------------------------------------------
 
         state_tensor = torch.tensor(
-
             state,
-
             dtype=torch.float32
-        )
+        ).unsqueeze(0)
 
 
-        # -------------------------------------------------
-        # MAIN DQN Q-VALUES
-        # -------------------------------------------------
-
-        q_values = dqn(
-            state_tensor
-        )
-
-
-        # =================================================
+        # ----------------------------------------------------
         # EPSILON-GREEDY ACTION
-        # =================================================
+        # ----------------------------------------------------
 
         if random.random() < epsilon:
 
-
-            # Explore
-
             action = env.action_space.sample()
-
 
         else:
 
+            with torch.no_grad():
 
-            # Exploit
+                q_values = dqn(state_tensor)
 
-            action = torch.argmax(
-                q_values
-            ).item()
+                action = torch.argmax(
+                    q_values
+                ).item()
 
 
-        # =================================================
+        # ----------------------------------------------------
         # ENVIRONMENT STEP
-        # =================================================
+        # ----------------------------------------------------
 
-        next_state, reward, terminated, truncated, info = env.step(
-            action
-        )
-
+        next_state, reward, terminated, truncated, info = env.step(action)
 
         done = terminated or truncated
-
-
-        # =================================================
-        # REPORT INFORMATION
-        # =================================================
-
-        episode_reward += reward
 
         final_reward = reward
 
 
-        current_x_distance = abs(
-            next_state[0]
-        )
+        # ====================================================
+        # SOFT-LANDING PENALTY
+        # ====================================================
+
+        training_reward = reward
+
+        height = next_state[1]
+
+        vertical_velocity = next_state[3]
+
+        extra_soft_penalty = 0
 
 
-        if current_x_distance < closest_x_to_center:
+        # Lander is close to ground
+        # AND falling too quickly
 
-            closest_x_to_center = current_x_distance
+        if (
+            height < soft_landing_height
+            and
+            vertical_velocity < safe_vertical_speed
+        ):
+
+            excess_speed = (
+                abs(vertical_velocity)
+                -
+                abs(safe_vertical_speed)
+            )
+
+            extra_soft_penalty = (
+                soft_landing_penalty_strength
+                *
+                excess_speed
+            )
+
+            training_reward -= extra_soft_penalty
 
 
-        # =================================================
+        total_soft_penalty += extra_soft_penalty
+
+
+        # ====================================================
         # STORE EXPERIENCE
-        # =================================================
-
-        experience = (
-
-            state,
-            action,
-            reward,
-            next_state,
-            done
-
-        )
-
+        # ====================================================
 
         replay_buffer.append(
-            experience
+            (
+                state,
+                action,
+                training_reward,
+                next_state,
+                done
+            )
         )
 
 
-        # =================================================
-        # START TRAINING AFTER 32 EXPERIENCES
-        # =================================================
+        # Original Gym reward
+        gym_total_reward += reward
+
+        # Reward the DQN actually learns from
+        training_total_reward += training_reward
+
+
+        closest_x = min(
+            closest_x,
+            abs(next_state[0])
+        )
+
+
+        # ====================================================
+        # 10. TRAIN DQN
+        # ====================================================
 
         if len(replay_buffer) >= batch_size:
 
-
-            # ---------------------------------------------
-            # RANDOMLY SAMPLE 32 EXPERIENCES
-            # ---------------------------------------------
-
             batch = random.sample(
-
                 replay_buffer,
-
                 batch_size
             )
 
 
-            states, actions, rewards, next_states, dones = zip(
-                *batch
-            )
+            states, actions, rewards, next_states, dones = zip(*batch)
 
-
-            # ---------------------------------------------
-            # CONVERT TO TENSORS
-            # ---------------------------------------------
 
             states_tensor = torch.tensor(
-
                 np.array(states),
-
                 dtype=torch.float32
             )
 
-
             actions_tensor = torch.tensor(
-
                 actions,
-
                 dtype=torch.long
             )
 
-
             rewards_tensor = torch.tensor(
-
                 rewards,
-
                 dtype=torch.float32
             )
-
 
             next_states_tensor = torch.tensor(
-
                 np.array(next_states),
-
                 dtype=torch.float32
             )
-
 
             dones_tensor = torch.tensor(
-
                 dones,
-
                 dtype=torch.float32
             )
 
 
-            # =================================================
-            # MAIN NETWORK PREDICTION
-            # =================================================
+            # ------------------------------------------------
+            # MAIN DQN PREDICTION
+            # ------------------------------------------------
 
             all_q_values = dqn(
                 states_tensor
@@ -373,68 +368,50 @@ for episode in range(500):
 
 
             predicted_q_values = all_q_values.gather(
-
                 1,
-
                 actions_tensor.unsqueeze(1)
-
             ).squeeze(1)
 
 
-            # =================================================
-            # TARGET NETWORK
-            # =================================================
+            # ------------------------------------------------
+            # TARGET DQN
+            # ------------------------------------------------
 
             with torch.no_grad():
-
 
                 next_q_values = target_dqn(
                     next_states_tensor
                 )
-
 
                 best_next_q_values = next_q_values.max(
                     dim=1
                 ).values
 
 
-                # ---------------------------------------------
-                # TD TARGET
-                # ---------------------------------------------
-
                 targets = (
-
                     rewards_tensor
-
                     +
-
                     gamma
-                    * best_next_q_values
-                    * (1 - dones_tensor)
-
+                    *
+                    best_next_q_values
+                    *
+                    (1 - dones_tensor)
                 )
 
 
-            # =================================================
+            # ------------------------------------------------
             # LOSS
-            # =================================================
+            # ------------------------------------------------
 
             loss = loss_function(
-
                 predicted_q_values,
-
                 targets
             )
 
 
-            episode_losses.append(
-                loss.item()
-            )
-
-
-            # =================================================
-            # UPDATE MAIN NETWORK WEIGHTS
-            # =================================================
+            # ------------------------------------------------
+            # UPDATE MAIN DQN
+            # ------------------------------------------------
 
             optimizer.zero_grad()
 
@@ -443,63 +420,50 @@ for episode in range(500):
             optimizer.step()
 
 
+            episode_losses.append(
+                loss.item()
+            )
+
+
+            # ------------------------------------------------
+            # TARGET NETWORK UPDATE
+            # ------------------------------------------------
+
             training_step += 1
 
 
-            # =================================================
-            # UPDATE TARGET NETWORK
-            # =================================================
-
             if training_step % target_update_frequency == 0:
-
 
                 target_dqn.load_state_dict(
                     dqn.state_dict()
                 )
 
 
-                print(
-                    "TARGET NETWORK UPDATED"
-                )
-
-
-        # =================================================
-        # EPISODE FINISHED
-        # =================================================
-
-        if done:
-
-            break
-
-
-        # State 2 becomes current state
+        # ----------------------------------------------------
+        # MOVE TO NEXT STATE
+        # ----------------------------------------------------
 
         state = next_state
 
 
-    # =====================================================
-    # END OF TRAINING EPISODE
-    # =====================================================
+        if done:
+            break
 
-    final_x = next_state[0]
 
-    final_y = next_state[1]
+    # ========================================================
+    # 11. END OF EPISODE
+    # ========================================================
 
-    left_leg = next_state[6]
-
-    right_leg = next_state[7]
+    epsilon = max(
+        epsilon_min,
+        epsilon * epsilon_decay
+    )
 
 
     if len(episode_losses) > 0:
 
-        average_loss = (
-
-            sum(episode_losses)
-
-            /
-
-            len(episode_losses)
-
+        average_loss = np.mean(
+            episode_losses
         )
 
     else:
@@ -507,723 +471,368 @@ for episode in range(500):
         average_loss = 0
 
 
-    # =====================================================
-    # PRINT TRAINING REPORT
-    # =====================================================
-
-    print()
-
-    print("==============================")
-
-    print("TRAINING EPISODE:", episode)
-
-    print("==============================")
-
-
-    print(
-        "Epsilon:",
-        round(episode_epsilon, 4)
+    training_rewards.append(
+        training_total_reward
     )
 
-
-    print(
-        "Total Reward:",
-        round(episode_reward, 2)
-    )
-
-
-    print(
-        "Steps:",
-        step_number + 1
-    )
-
-
-    print(
-        "Final Reward:",
-        round(final_reward, 2)
-    )
-
-
-    print(
-        "Average Loss:",
-        round(average_loss, 4)
-    )
-
-
-    print("==============================")
-
-
-    # =====================================================
-    # SAVE TRAINING RESULT
-    # =====================================================
-
-    csv_writer.writerow([
-
-        episode,
-
-        episode_epsilon,
-
-        episode_reward,
-
-        step_number + 1,
-
-        final_x,
-
-        final_y,
-
-        closest_x_to_center,
-
-        left_leg,
-
-        right_leg,
-
-        final_reward,
-
+    training_losses.append(
         average_loss
+    )
 
+
+    training_writer.writerow([
+        episode + 1,
+        epsilon,
+        gym_total_reward,
+        training_total_reward,
+        step_number + 1,
+        state[0],
+        state[1],
+        state[3],
+        closest_x,
+        state[6],
+        state[7],
+        final_reward,
+        average_loss,
+        total_soft_penalty
     ])
 
 
-    report_file.flush()
-
-
-    # =====================================================
-    # DECAY EPSILON
-    # =====================================================
-
-    epsilon = max(
-
-        epsilon_min,
-
-        epsilon * epsilon_decay
-
+    print(
+        f"Episode {episode + 1} | "
+        f"Gym Reward: {gym_total_reward:.2f} | "
+        f"Training Reward: {training_total_reward:.2f} | "
+        f"Epsilon: {epsilon:.3f} | "
+        f"Final VY: {state[3]:.3f} | "
+        f"Soft Penalty: {total_soft_penalty:.2f}"
     )
 
 
-# =========================================================
-# TRAINING FINISHED
-# =========================================================
-
-report_file.close()
+training_file.close()
 
 
-print()
+# ============================================================
+# 12. SAVE TRAINED MODEL
+# ============================================================
 
-print("====================================")
-
-print("500 TRAINING EPISODES COMPLETE")
-
-print("====================================")
-
-print()
+torch.save(
+    dqn.state_dict(),
+    "lunar_lander_soft_landing_dqn.pth"
+)
 
 
-# =========================================================
-# 13. EVALUATION
-#
-# EPSILON = 0
-# NO TRAINING
-# =========================================================
+# ============================================================
+# 13. PURE EVALUATION
+# ============================================================
 
 dqn.eval()
 
+number_of_test_episodes = 100
 
-test_episodes = 100
-
+evaluation_rewards = []
 
 successful_landings = 0
 
 
-evaluation_results = []
+evaluation_file = open(
+    "evaluation_report_soft_landing.csv",
+    "w",
+    newline=""
+)
+
+evaluation_writer = csv.writer(
+    evaluation_file
+)
+
+evaluation_writer.writerow([
+    "Test Episode",
+    "Total Reward",
+    "Steps",
+    "Final X",
+    "Final Y",
+    "Final Vertical Velocity",
+    "Left Leg",
+    "Right Leg",
+    "Final Reward"
+])
 
 
-# =========================================================
-# RUN 100 TEST EPISODES
-# =========================================================
-
-for test_episode in range(test_episodes):
-
+for test_episode in range(number_of_test_episodes):
 
     state, info = env.reset()
 
+    total_reward = 0
 
-    total_test_reward = 0
+    final_reward = 0
 
-
-    final_test_reward = 0
-
-
-    # =====================================================
-    # TEST EPISODE
-    # =====================================================
 
     for step_number in range(500):
 
 
+        # ====================================================
+        # NEW: DISPLAY TEST EPISODE
+        # ====================================================
+
+        if env.unwrapped.screen is not None:
+
+            test_text = episode_font.render(
+                f"Evaluation: {test_episode + 1} / {number_of_test_episodes}",
+                True,
+                (255, 255, 255)
+            )
+
+            env.unwrapped.screen.blit(
+                test_text,
+                (20, 20)
+            )
+
+            pygame.display.update()
+
+
         state_tensor = torch.tensor(
-
             state,
-
             dtype=torch.float32
-        )
+        ).unsqueeze(0)
 
 
-        # =================================================
-        # NO TRAINING
-        # =================================================
+        # ----------------------------------------------------
+        # PURE GREEDY ACTION
+        # ----------------------------------------------------
 
         with torch.no_grad():
-
 
             q_values = dqn(
                 state_tensor
             )
 
-
-        # =================================================
-        # EPSILON = 0
-        #
-        # ALWAYS PICK HIGHEST Q-VALUE
-        # =================================================
-
-        action = torch.argmax(
-            q_values
-        ).item()
+            action = torch.argmax(
+                q_values
+            ).item()
 
 
-        # =================================================
-        # TAKE ACTION
-        # =================================================
-
-        next_state, reward, terminated, truncated, info = env.step(
-            action
-        )
-
-
-        total_test_reward += reward
-
-
-        final_test_reward = reward
-
+        next_state, reward, terminated, truncated, info = env.step(action)
 
         done = terminated or truncated
 
 
-        # =================================================
-        # CHECK SUCCESS
-        # =================================================
+        # IMPORTANT:
+        # Evaluation uses ORIGINAL Gym reward.
+        # No custom penalty here.
 
-        if done:
+        total_reward += reward
 
-
-            if reward == 100:
-
-                successful_landings += 1
-
-
-            break
-
+        final_reward = reward
 
         state = next_state
 
 
-    # =====================================================
-    # SAVE TEST RESULT
-    # =====================================================
-
-    evaluation_results.append([
-
-        test_episode,
-
-        total_test_reward,
-
-        step_number + 1,
-
-        next_state[0],
-
-        next_state[1],
-
-        next_state[6],
-
-        next_state[7],
-
-        final_test_reward
-
-    ])
+        if done:
+            break
 
 
-    print(
+    if final_reward == 100:
 
-        "TEST EPISODE:",
-
-        test_episode,
-
-        "| Reward:",
-
-        round(total_test_reward, 2)
-
-    )
+        successful_landings += 1
 
 
-# =========================================================
-# 14. CREATE EVALUATION CSV
-# =========================================================
-
-evaluation_csv = "evaluation_report.csv"
-
-
-with open(
-
-    evaluation_csv,
-
-    "w",
-
-    newline=""
-
-) as evaluation_file:
-
-
-    evaluation_writer = csv.writer(
-        evaluation_file
+    evaluation_rewards.append(
+        total_reward
     )
 
 
     evaluation_writer.writerow([
-
-        "Test Episode",
-
-        "Total Reward",
-
-        "Steps",
-
-        "Final X",
-
-        "Final Y",
-
-        "Left Leg",
-
-        "Right Leg",
-
-        "Final Reward"
-
+        test_episode + 1,
+        total_reward,
+        step_number + 1,
+        state[0],
+        state[1],
+        state[3],
+        state[6],
+        state[7],
+        final_reward
     ])
 
 
-    evaluation_writer.writerows(
-        evaluation_results
+    print(
+        f"TEST {test_episode + 1} | "
+        f"Reward: {total_reward:.2f} | "
+        f"Final VY: {state[3]:.3f}"
     )
 
 
-# =========================================================
-# 15. FINAL EVALUATION RESULTS
-# =========================================================
-
-test_rewards = [
-
-    row[1]
-
-    for row in evaluation_results
-
-]
+evaluation_file.close()
 
 
-average_test_reward = (
+# ============================================================
+# 14. EVALUATION SUMMARY
+# ============================================================
 
-    sum(test_rewards)
-
-    /
-
-    len(test_rewards)
-
+average_test_reward = np.mean(
+    evaluation_rewards
 )
 
-
 success_rate = (
-
     successful_landings
-
     /
-
-    test_episodes
-
+    number_of_test_episodes
 ) * 100
 
 
-print()
-
-print("====================================")
-
-print("FINAL EVALUATION")
-
-print("====================================")
+print("\n==============================")
+print("EVALUATION RESULTS")
+print("==============================")
 
 
 print(
-    "Test Episodes:",
-    test_episodes
+    f"Average Test Reward: "
+    f"{average_test_reward:.2f}"
 )
 
 
 print(
-    "Successful Landings:",
-    successful_landings
+    f"Successful Landings: "
+    f"{successful_landings}/"
+    f"{number_of_test_episodes}"
 )
 
 
 print(
-    "Success Rate:",
-    round(success_rate, 2),
-    "%"
+    f"Success Rate: "
+    f"{success_rate:.1f}%"
 )
 
 
-print(
-    "Average Test Reward:",
-    round(average_test_reward, 2)
+# ============================================================
+# 15. CREATE GRAPH
+# ============================================================
+
+training_series = pd.Series(
+    training_rewards
+)
+
+training_average = training_series.rolling(
+    window=25
+).mean()
+
+
+evaluation_series = pd.Series(
+    evaluation_rewards
+)
+
+evaluation_average = evaluation_series.rolling(
+    window=10
+).mean()
+
+
+plt.figure(figsize=(11, 6))
+
+
+plt.plot(
+    range(1, number_of_episodes + 1),
+    training_average,
+    label="Training - 25 Episode Average"
 )
 
 
-print("====================================")
-
-
-# =========================================================
-# 16. CREATE EXCEL REPORT
-# =========================================================
-
-training_df = pd.read_csv(
-    training_csv
+plt.plot(
+    range(
+        number_of_episodes + 1,
+        number_of_episodes + number_of_test_episodes + 1
+    ),
+    evaluation_average,
+    label="Evaluation - 10 Episode Average"
 )
 
 
-evaluation_df = pd.read_csv(
-    evaluation_csv
+plt.axvline(
+    x=number_of_episodes,
+    linestyle="--"
 )
 
 
-# =========================================================
-# ADD SMOOTH TRAINING REWARD
-# =========================================================
+plt.xlabel("Episode")
 
-training_df["25 Episode Average Reward"] = (
+plt.ylabel("Reward")
 
-    training_df["Total Reward"]
 
-    .rolling(
-
-        window=25,
-
-        min_periods=1
-
-    )
-
-    .mean()
-
+plt.title(
+    "Lunar Lander DQN - Soft Landing Experiment"
 )
 
 
-# =========================================================
-# ADD SMOOTH TRAINING LOSS
-# =========================================================
+plt.legend()
 
-training_df["25 Episode Average Loss"] = (
+plt.tight_layout()
 
-    training_df["Average Loss"]
 
-    .rolling(
-
-        window=25,
-
-        min_periods=1
-
-    )
-
-    .mean()
-
+plt.savefig(
+    "soft_landing_reward_graph.png",
+    dpi=300
 )
 
 
-# =========================================================
-# ADD SMOOTH TEST REWARD
-# =========================================================
+plt.show()
 
-evaluation_df["10 Episode Average Reward"] = (
 
-    evaluation_df["Total Reward"]
+# ============================================================
+# 16. CREATE EXCEL FILE
+# ============================================================
 
-    .rolling(
+training_dataframe = pd.read_csv(
+    "training_report_soft_landing.csv"
+)
 
-        window=10,
-
-        min_periods=1
-
-    )
-
-    .mean()
-
+evaluation_dataframe = pd.read_csv(
+    "evaluation_report_soft_landing.csv"
 )
 
 
-# =========================================================
-# SAVE BOTH SHEETS TO EXCEL
-# =========================================================
+training_dataframe[
+    "25 Episode Average Reward"
+] = training_dataframe[
+    "Training Reward"
+].rolling(
+    25
+).mean()
 
-excel_filename = "lunar_lander_results.xlsx"
+
+training_dataframe[
+    "25 Episode Average Loss"
+] = training_dataframe[
+    "Average Loss"
+].rolling(
+    25
+).mean()
+
+
+evaluation_dataframe[
+    "10 Episode Average Reward"
+] = evaluation_dataframe[
+    "Total Reward"
+].rolling(
+    10
+).mean()
 
 
 with pd.ExcelWriter(
-
-    excel_filename,
-
-    engine="openpyxl"
-
+    "lunar_lander_soft_landing_results.xlsx"
 ) as writer:
 
-
-    training_df.to_excel(
-
+    training_dataframe.to_excel(
         writer,
-
         sheet_name="Training",
-
         index=False
-
     )
 
-
-    evaluation_df.to_excel(
-
+    evaluation_dataframe.to_excel(
         writer,
-
         sheet_name="Evaluation",
-
         index=False
-
     )
 
 
-# =========================================================
-# 17. ADD GRAPHS TO EXCEL
-# =========================================================
-
-workbook = load_workbook(
-    excel_filename
-)
-
-
-# =========================================================
-# TRAINING GRAPH
-# =========================================================
-
-training_sheet = workbook["Training"]
-
-
-training_chart = LineChart()
-
-
-training_chart.title = (
-    "Training - 25 Episode Average Reward"
-)
-
-
-training_chart.y_axis.title = (
-    "Average Reward"
-)
-
-
-training_chart.x_axis.title = (
-    "Episode"
-)
-
-
-training_reward_column = (
-
-    training_df.columns.get_loc(
-        "25 Episode Average Reward"
-    )
-
-    + 1
-
-)
-
-
-training_data = Reference(
-
-    training_sheet,
-
-    min_col=training_reward_column,
-
-    min_row=1,
-
-    max_row=training_sheet.max_row
-
-)
-
-
-training_categories = Reference(
-
-    training_sheet,
-
-    min_col=1,
-
-    min_row=2,
-
-    max_row=training_sheet.max_row
-
-)
-
-
-training_chart.add_data(
-
-    training_data,
-
-    titles_from_data=True
-
-)
-
-
-training_chart.set_categories(
-    training_categories
-)
-
-
-training_chart.height = 10
-
-training_chart.width = 20
-
-
-training_sheet.add_chart(
-
-    training_chart,
-
-    "N2"
-
-)
-
-
-# =========================================================
-# EVALUATION GRAPH
-# =========================================================
-
-evaluation_sheet = workbook["Evaluation"]
-
-
-evaluation_chart = LineChart()
-
-
-evaluation_chart.title = (
-    "Evaluation - Reward"
-)
-
-
-evaluation_chart.y_axis.title = (
-    "Reward"
-)
-
-
-evaluation_chart.x_axis.title = (
-    "Test Episode"
-)
-
-
-evaluation_data = Reference(
-
-    evaluation_sheet,
-
-    min_col=2,
-
-    min_row=1,
-
-    max_row=evaluation_sheet.max_row
-
-)
-
-
-evaluation_categories = Reference(
-
-    evaluation_sheet,
-
-    min_col=1,
-
-    min_row=2,
-
-    max_row=evaluation_sheet.max_row
-
-)
-
-
-evaluation_chart.add_data(
-
-    evaluation_data,
-
-    titles_from_data=True
-
-)
-
-
-evaluation_chart.set_categories(
-    evaluation_categories
-)
-
-
-evaluation_chart.height = 10
-
-evaluation_chart.width = 20
-
-
-evaluation_sheet.add_chart(
-
-    evaluation_chart,
-
-    "K2"
-
-)
-
-
-# =========================================================
-# SAVE EXCEL
-# =========================================================
-
-workbook.save(
-    excel_filename
-)
-
-
-# =========================================================
-# CLOSE ENVIRONMENT
-# =========================================================
+# ============================================================
+# 17. CLOSE ENVIRONMENT
+# ============================================================
 
 env.close()
-
-
-# =========================================================
-# FINISHED
-# =========================================================
-
-print()
-
-print("====================================")
-
-print("ALL DONE")
-
-print("====================================")
-
-
-print(
-    "Training CSV:",
-    training_csv
-)
-
-
-print(
-    "Evaluation CSV:",
-    evaluation_csv
-)
-
-
-print(
-    "Excel report:",
-    excel_filename
-)
-
-
-print("====================================")
